@@ -1,0 +1,150 @@
+<?php
+/**
+ * @file
+ * Demonstrate web scraping in Drupal.
+ */
+
+// Use composer.
+require 'vendor/autoload.php';
+
+/**
+ * Implements hook_menu().
+ */
+function nhl_goals_menu() {
+  $items = array();
+  $items['nhl_goals'] = array(
+    'title' => 'NHL goals',
+    'page callback' => 'nhl_goals_page',
+    'access callback' => TRUE,
+    'expanded' => TRUE,
+  );
+  $items['nhl_goals/many'] = array(
+    'title' => 'More players',
+    'page callback' => 'nhl_goals_page',
+    'page arguments' => array('slow', '20'),
+    'access callback' => TRUE,
+    'expanded' => TRUE,
+  );
+  $items['nhl_goals/many_rolling'] = array(
+    'title' => 'With RollingCurl',
+    'page callback' => 'nhl_goals_page',
+    'page arguments' => array('rolling', '20'),
+    'access callback' => TRUE,
+  );
+  return $items;
+}
+
+/**
+ * Callback for NHL goals.
+ */
+function nhl_goals_page($type = 'slow', $pages = 1) {
+  $pages = intval($pages);
+
+  if ($type == 'rolling') {
+    $goals = nhl_goals_rolling($pages);
+  }
+  else {
+    $goals = nhl_goals_many($pages);
+  }
+
+  $rows = array();
+  foreach ($goals as $player => $goals) {
+    $rows[] = array($player, $goals);
+  }
+
+  $load_time = microtime(TRUE) - $_SERVER['REQUEST_TIME_FLOAT'];
+  $load_message = array(
+    '#markup' => t('Page loaded in @time seconds', array(
+      '@time' => sprintf('%.3f', $load_time),
+    )),
+  );
+
+  $table = array(
+    '#theme' => 'table',
+    '#header' => array(t('Player'), t('Goals')),
+    '#rows' => $rows,
+  );
+
+  return array($load_message, $table);
+}
+
+/**
+ * Get the URL for a page of NHL goal scorers.
+ */
+function nhl_goals_url($page) {
+  return sprintf('http://www.nhl.com/ice/playerstats.htm?fetchKey=20152ALLSASALL&viewName=goals&sort=goals&pg=%s', $page);
+}
+
+/**
+ * From raw HTML, return an array that maps players' names to goals.
+ */
+function nhl_goals_scrape($html) {
+  // Parse the HTML.
+  $doc = new DOMDocument();
+  @$doc->loadHTML($html);
+
+  // Find a tbody element that's within a table that has class "data".
+  $xpath = new DOMXPath($doc);
+  $tbody = $xpath->query('//table[contains(@class, "data")]/tbody')->item(0);
+
+  // Look at each row of the table.
+  $return = array();
+  foreach ($tbody->childNodes as $tr) {
+
+    // Pull out column 1 and column 5.
+    $name = $tr->childNodes->item(1)->textContent;
+    $goals = intval($tr->childNodes->item(5)->textContent);
+    $return[$name] = $goals;
+  }
+
+  return $return;
+}
+
+/**
+ * Fetch many pages of goal scorers.
+ */
+function nhl_goals_many($pages) {
+  $return = array();
+
+  // Fetch URLs one at a time.
+  for ($i = 1; $i <= $pages; ++$i) {
+    $url = nhl_goals_url($i);
+    $html = file_get_contents($url);
+    $scraped = nhl_goals_scrape($html);
+    $return += $scraped;
+  }
+  return $return;
+}
+
+/**
+ * Fetch many pages of goal scorers, using RollingCurl.
+ */
+function nhl_goals_rolling($pages) {
+  $rolling = new \RollingCurl\RollingCurl();
+
+  // Create a list of URLs, and add each one to our RollingCurl.
+  $urls = array();
+  for ($i = 1; $i <= $pages; ++$i) {
+    $url = nhl_goals_url($i);
+    $urls[] = $url;
+    $rolling->get($url);
+  }
+
+  // Store the result for each URL, as responses come in.
+  $results = array();
+  $rolling->setCallback(function($req, $rolling) use (&$results) {
+    $html = $req->getResponseText();
+    $scraped = nhl_goals_scrape($html);
+    $results[$req->getUrl()] = $scraped;
+  });
+
+  // Run all the URL requests at once.
+  $rolling->execute();
+
+  // Collate results.
+  $return = array();
+  foreach ($urls as $url) {
+    $return = array_merge($return, $results[$url]);
+  }
+  return $return;
+}

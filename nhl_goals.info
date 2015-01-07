@@ -1,0 +1,4 @@
+name = NHL Goals
+description = "Display top goal scorers in the NHL"
+core = 7.x
+files[] = nhl_goals.module
