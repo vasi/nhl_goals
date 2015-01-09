@@ -4,8 +4,9 @@
  * Demonstrate web scraping in Drupal.
  */
 
-// Use composer.
-require 'vendor/autoload.php';
+// Pull in RollingCurl
+require_once 'include/Request.php';
+require_once 'include/RollingCurl.php';
 
 /**
  * Implements hook_menu().
